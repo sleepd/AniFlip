@@ -33,6 +33,7 @@ def _direction_property():
 
 
 classes = (
+    operators.ANIFLIP_OT_close_cycle,
     operators.ANIFLIP_OT_cycle_mirror,
     ui.ANIFLIP_PT_main_panel,
 )

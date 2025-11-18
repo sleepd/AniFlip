@@ -1,5 +1,4 @@
 import bpy
-import re
 from math import floor
 
 
@@ -31,12 +30,19 @@ def _duplicate_end_to_start(scene, obj, bone_names: set[str], cycle_frames: int)
     if cycle_frames < 1 or not bone_names:
         return
     end_frame = cycle_frames + 1
+    _copy_pose_between_frames(scene, obj, bone_names, end_frame, 1)
+
+
+def _copy_pose_between_frames(scene, obj, bone_names: set[str], src_frame: int, dst_frame: int, flipped: bool = False):
+    """Copy selected pose bones from src_frame to dst_frame."""
+    if not bone_names:
+        return
     _set_selection(obj, bone_names)
-    scene.frame_set(end_frame)
+    scene.frame_set(src_frame)
     bpy.ops.pose.copy()
-    scene.frame_set(1)
+    scene.frame_set(dst_frame)
     _set_selection(obj, bone_names)
-    bpy.ops.pose.paste(flipped=False)
+    bpy.ops.pose.paste(flipped=flipped)
     bpy.ops.anim.keyframe_insert_menu(type='LocRotScale')
 
 
@@ -48,6 +54,64 @@ def _set_selection(obj, names: set[str]):
     if names:
         first = next(iter(names))
         obj.data.bones.active = obj.data.bones.get(first)
+
+
+def _clear_keyframes_for_bones(action, bone_names: set[str]):
+    """Remove all keyframes for the given pose bones."""
+    if not action or not bone_names:
+        return
+    prefixes = [f'pose.bones["{name}"]' for name in bone_names]
+    for fc in list(action.fcurves):
+        if any(fc.data_path.startswith(prefix) for prefix in prefixes):
+            fc.keyframe_points.clear()
+
+
+class ANIFLIP_OT_close_cycle(bpy.types.Operator):
+    """Copy first frame to end+1 to close the loop."""
+    bl_idname = "aniflip.close_cycle"
+    bl_label = "Close Cycle"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (
+            obj
+            and obj.type == "ARMATURE"
+            and obj.mode == "POSE"
+            and obj.animation_data
+            and obj.animation_data.action is not None
+        )
+
+    def execute(self, context):
+        scene = context.scene
+        obj = context.active_object
+        cycle_frames = int(getattr(scene, "aniflip_cycle_frames", 0) or 0)
+        if cycle_frames < 1:
+            self.report({'ERROR'}, "Cycle frames must be at least 1")
+            return {'CANCELLED'}
+
+        bones_to_copy = {pb.name for pb in obj.pose.bones if pb.bone.select}
+        if not bones_to_copy:
+            bones_to_copy = {pb.name for pb in obj.pose.bones}
+        if not bones_to_copy:
+            self.report({'ERROR'}, "No pose bones to copy")
+            return {'CANCELLED'}
+
+        original_frame = scene.frame_current
+        original_active = obj.data.bones.active
+        original_selection = {pb.name for pb in obj.pose.bones if pb.bone.select}
+
+        try:
+            target_frame = cycle_frames + 1
+            _copy_pose_between_frames(scene, obj, bones_to_copy, 1, target_frame)
+        finally:
+            scene.frame_set(original_frame)
+            _set_selection(obj, original_selection)
+            obj.data.bones.active = original_active
+
+        self.report({'INFO'}, f"Copied frame 1 to {cycle_frames + 1}")
+        return {'FINISHED'}
 
 
 class ANIFLIP_OT_cycle_mirror(bpy.types.Operator):
@@ -108,6 +172,7 @@ class ANIFLIP_OT_cycle_mirror(bpy.types.Operator):
         original_selection = {pb.name for pb in obj.pose.bones if pb.bone.select}
 
         try:
+            _clear_keyframes_for_bones(action, set(src_to_dst.values()))
             processed_frames = 0
             for src_name, dst_name in src_to_dst.items():
                 frames_raw = sorted(_collect_frames_for_bone(action, src_name))

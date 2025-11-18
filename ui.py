@@ -22,4 +22,5 @@ class ANIFLIP_PT_main_panel(bpy.types.Panel):
         layout.prop(scene, "aniflip_direction", expand=True)
 
         layout.separator()
+        layout.operator("aniflip.close_cycle", text="Close Cycle")
         layout.operator("aniflip.cycle_mirror", text="Cycle Mirror")
