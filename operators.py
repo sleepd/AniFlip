@@ -11,16 +11,26 @@ def _mirror_name(name: str):
 
 
 def _iter_action_fcurves(action):
-    """Yield all F-Curves from an action using Blender 5.0's layered system."""
+    """Yield F-Curves for both Blender 5.0 layered actions and legacy actions."""
     if not action:
         return
-    for layer in action.layers:
-        for strip in layer.strips:
-            if strip.type != "KEYFRAME":
-                continue
-            for bag in strip.channelbags:
-                for fc in bag.fcurves:
-                    yield fc
+
+    if getattr(action, "is_action_layered", False) and hasattr(action, "layers"):
+        for layer in action.layers:
+            for strip in getattr(layer, "strips", ()):
+                if getattr(strip, "type", "KEYFRAME") != "KEYFRAME":
+                    continue
+                bags = getattr(strip, "channelbags", ())
+                # channelbags may be a mapping or a sequence
+                bags_iter = bags.values() if hasattr(bags, "values") else bags
+                for bag in bags_iter:
+                    for fc in getattr(bag, "fcurves", ()):
+                        yield fc
+        return
+
+    # Legacy/non-layered
+    for fc in getattr(action, "fcurves", ()):
+        yield fc
 
 
 def _collect_frames_for_bone(action, bone_name: str):
@@ -84,7 +94,8 @@ def _clear_keyframes_for_bones(action, bone_names: set[str]):
     if not action or not bone_names:
         return
     prefixes = [f'pose.bones["{name}"]' for name in bone_names]
-    for fc in list(action.fcurves):
+    # Blender 5.0 actions use layered strips; iterate through those instead of action.fcurves
+    for fc in _iter_action_fcurves(action):
         if any(fc.data_path.startswith(prefix) for prefix in prefixes):
             fc.keyframe_points.clear()
 
@@ -114,7 +125,7 @@ class ANIFLIP_OT_close_cycle(bpy.types.Operator):
             self.report({'ERROR'}, "Cycle frames must be at least 1")
             return {'CANCELLED'}
 
-        bones_to_copy = {pb.name for pb in obj.pose.bones if pb.bone.select}
+        bones_to_copy = {pb.name for pb in obj.pose.bones if _pose_bone_selected(pb)}
         if not bones_to_copy:
             bones_to_copy = {pb.name for pb in obj.pose.bones}
         if not bones_to_copy:
@@ -123,7 +134,7 @@ class ANIFLIP_OT_close_cycle(bpy.types.Operator):
 
         original_frame = scene.frame_current
         original_active = obj.data.bones.active
-        original_selection = {pb.name for pb in obj.pose.bones if pb.bone.select}
+        original_selection = {pb.name for pb in obj.pose.bones if _pose_bone_selected(pb)}
 
         try:
             target_frame = cycle_frames + 1
