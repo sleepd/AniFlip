@@ -1,8 +1,8 @@
 bl_info = {
     "name": "AniFlip",
     "author": "Qiao Xu",
-    "version": (0, 1, 0),
-    "blender": (4, 5, 0),
+    "version": (0, 1,2),
+    "blender": (5, 0, 0),
     "category": "Animation",
     "description": "Mirror keyframes and apply cycle offsets",
 }

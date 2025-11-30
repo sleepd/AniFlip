@@ -10,6 +10,19 @@ def _mirror_name(name: str):
     return None
 
 
+def _iter_action_fcurves(action):
+    """Yield all F-Curves from an action using Blender 5.0's layered system."""
+    if not action:
+        return
+    for layer in action.layers:
+        for strip in layer.strips:
+            if strip.type != "KEYFRAME":
+                continue
+            for bag in strip.channelbags:
+                for fc in bag.fcurves:
+                    yield fc
+
+
 def _collect_frames_for_bone(action, bone_name: str):
     frames = set()
     if not action or not bone_name:
@@ -17,12 +30,22 @@ def _collect_frames_for_bone(action, bone_name: str):
 
     # Match this bone's fcurves (e.g., pose.bones["Bone.L"].location, rotation_quaternion, etc.)
     bone_path_prefix = f'pose.bones["{bone_name}"]'
-    for fc in action.fcurves:
+    for fc in _iter_action_fcurves(action):
         if not fc.data_path.startswith(bone_path_prefix):
             continue
-        for kp in fc.keyframe_points:
+        for kp in getattr(fc, "keyframe_points", []):
             frames.add(int(round(kp.co[0])))
     return frames
+
+
+def _pose_bone_selected(pose_bone):
+    """Return whether the pose bone is selected in Blender 5.0."""
+    return pose_bone.select
+
+
+def _set_pose_bone_selected(pose_bone, value: bool):
+    """Set pose bone selection in Blender 5.0."""
+    pose_bone.select = value
 
 
 def _duplicate_end_to_start(scene, obj, bone_names: set[str], cycle_frames: int):
@@ -49,7 +72,7 @@ def _copy_pose_between_frames(scene, obj, bone_names: set[str], src_frame: int, 
 def _set_selection(obj, names: set[str]):
     """Select only the given pose bones."""
     for pb in obj.pose.bones:
-        pb.bone.select = pb.name in names
+        _set_pose_bone_selected(pb, pb.name in names)
     # set active bone to one of selected for ops that need it
     if names:
         first = next(iter(names))
@@ -169,7 +192,7 @@ class ANIFLIP_OT_cycle_mirror(bpy.types.Operator):
 
         original_frame = scene.frame_current
         original_active = obj.data.bones.active
-        original_selection = {pb.name for pb in obj.pose.bones if pb.bone.select}
+        original_selection = {pb.name for pb in obj.pose.bones if _pose_bone_selected(pb)}
 
         try:
             _clear_keyframes_for_bones(action, set(src_to_dst.values()))
